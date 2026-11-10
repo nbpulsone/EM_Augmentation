@@ -24,11 +24,15 @@ if __name__=="__main__":
     parser.add_argument("--finetuning", dest="finetuning", action="store_true")
     parser.add_argument("--save_model", dest="save_model", action="store_true")
     parser.add_argument("--logdir", type=str, default="checkpoints/")
-    parser.add_argument("--lm", type=str, default='distilbert')
+
+    # augmentation-related parameters
+    parser.add_argument("--student_lm", type=str, default="distilbert")
+    parser.add_argument("--teacher_lm", type=str, default=None)
+    parser.add_argument("--active_aug", action="store_true")
+    parser.add_argument("--aug_examples", type=int, default=100)
+
     parser.add_argument("--fp16", dest="fp16", action="store_true")
     parser.add_argument("--bf16", action="store_true")
-    parser.add_argument("--da", type=str, default=None)
-    parser.add_argument("--alpha_aug", type=float, default=0.8)
     parser.add_argument("--dk", type=str, default=None)
     parser.add_argument("--summarize", dest="summarize", action="store_true")
     parser.add_argument("--size", type=int, default=None)
@@ -53,7 +57,7 @@ if __name__=="__main__":
     task = hp.task
 
     # create the tag of the run
-    run_tag = '%s_lm=%s_da=%s_dk=%s_su=%s_size=%s_id=%d' % (task, hp.lm, hp.da,
+    run_tag = '%s_student-lm=%s_teacher-lm=%s_dk=%s_su=%s_size=%s_id=%d' % (task, hp.student_lm, hp.teacher_lm,
             hp.dk, hp.summarize, str(hp.size), hp.run_id)
     run_tag = run_tag.replace('/', '_')
 
@@ -68,7 +72,7 @@ if __name__=="__main__":
 
     # summarize the sequences up to the max sequence length
     if hp.summarize:
-        summarizer = Summarizer(config, lm=hp.lm)
+        summarizer = Summarizer(config, lm=hp.student_lm)
         trainset = summarizer.transform_file(trainset, max_len=hp.max_len)
         validset = summarizer.transform_file(validset, max_len=hp.max_len)
         testset = summarizer.transform_file(testset, max_len=hp.max_len)
@@ -85,16 +89,15 @@ if __name__=="__main__":
 
     # load train/dev/test sets
     train_dataset = DittoDataset(trainset,
-                                   lm=hp.lm,
+                                   lm=hp.student_lm,
                                    max_len=hp.max_len,
-                                   size=hp.size,
-                                   da=hp.da)
-    valid_dataset = DittoDataset(validset, lm=hp.lm, max_len=hp.max_len)
-    test_dataset = DittoDataset(testset, lm=hp.lm, max_len=hp.max_len)
+                                   size=hp.size)
+    valid_dataset = DittoDataset(validset, lm=hp.student_lm, max_len=hp.max_len)
+    test_dataset = DittoDataset(testset, lm=hp.student_lm, max_len=hp.max_len)
 
-    # train and evaluate the model
+    # train and evaluate the model   
     best_test_f1, best_val_f1 = train(train_dataset, valid_dataset, test_dataset, run_tag, hp)
-
+ 
     print(f"~~~~ FINAL F1 RESULTS ({hp.task}) ~~~~")
     print(f"val f1 = {best_val_f1}")
     print(f"test f1 = {best_test_f1}")

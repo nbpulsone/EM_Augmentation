@@ -8,8 +8,10 @@ import random
 import numpy as np
 import sklearn.metrics as metrics
 import argparse
+import math
 
 from .dataset import DittoDataset
+from .augmentation.active_driver import ActiveAugmentationDriver
 from torch.utils import data
 from transformers import AutoModel, get_linear_schedule_with_warmup
 from torch.optim import AdamW
@@ -25,15 +27,13 @@ lm_mp = {
 class DittoModel(nn.Module):
     """A baseline model for EM."""
 
-    def __init__(self, device='cuda', lm='roberta',
-                 alpha_aug=0.8, pad_token_id=0):
+    def __init__(self, device='cuda', lm='roberta', pad_token_id=0):
         super().__init__()
 
         model_name = lm_mp.get(lm, lm)
         self.bert = AutoModel.from_pretrained(model_name)
 
         self.device = device
-        self.alpha_aug = alpha_aug
         self.pad_token_id = pad_token_id
 
         hidden_size = self.bert.config.hidden_size
@@ -49,22 +49,10 @@ class DittoModel(nn.Module):
 
         return outputs.last_hidden_state[:, 0, :]
 
-    def forward(self, x1, x2=None, embed=False):
-        x1 = x1.to(self.device)
+    def forward(self, x, embed=False):
+        x = x.to(self.device)
 
-        if x2 is not None:
-            x2 = x2.to(self.device)
-
-            enc = self._encode(torch.cat((x1, x2)))
-            batch_size = len(x1)
-
-            enc1 = enc[:batch_size]
-            enc2 = enc[batch_size:]
-
-            aug_lam = np.random.beta(self.alpha_aug, self.alpha_aug)
-            enc = enc1 * aug_lam + enc2 * (1.0 - aug_lam)
-        else:
-            enc = self._encode(x1)
+        enc = self._encode(x)
 
         if embed:
             return enc
@@ -72,7 +60,7 @@ class DittoModel(nn.Module):
         return self.fc(enc)
 
 
-def evaluate(model, iterator, threshold=None):
+def evaluate(model, iterator, threshold=None, return_details=False):
     """Evaluate a model on a validation/test dataset
 
     Args:
@@ -111,6 +99,16 @@ def evaluate(model, iterator, threshold=None):
                 f1 = new_f1
                 best_th = th
 
+        
+        if return_details:
+            # return details potentially relevant for augmentation
+            details = {
+                "labels": all_y,
+                "probs": all_probs,
+                "threshold": best_th
+            }
+            return f1, best_th, details
+
         return f1, best_th
 
 
@@ -140,12 +138,8 @@ def train_step(train_iter, model, optimizer, scheduler, hp, scaler=None):
             dtype=torch.float16 if use_fp16 else torch.bfloat16,
             enabled=use_fp16 or use_bf16
         ):
-            if len(batch) == 2:
-                x, y = batch
-                prediction = model(x)
-            else:
-                x1, x2, y = batch
-                prediction = model(x1, x2)
+            x, y = batch
+            prediction = model(x)
 
             loss = criterion(prediction, y.to(model.device))
 
@@ -180,12 +174,7 @@ def train(trainset, validset, testset, run_tag, hp):
         None
     """
     padder = trainset.pad
-    # create the DataLoaders
-    train_iter = data.DataLoader(dataset=trainset,
-                                 batch_size=hp.batch_size,
-                                 shuffle=True,
-                                 num_workers=0,
-                                 collate_fn=padder)
+    # create the evaluation DataLoaders
     valid_iter = data.DataLoader(dataset=validset,
                                  batch_size=hp.batch_size*16,
                                  shuffle=False,
@@ -199,7 +188,7 @@ def train(trainset, validset, testset, run_tag, hp):
 
     # initialize model, optimizer, and LR scheduler
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = DittoModel(device=device, lm=hp.lm, alpha_aug=hp.alpha_aug, pad_token_id=trainset.tokenizer.pad_token_id).to(device)
+    model = DittoModel(device=device, lm=hp.student_lm, pad_token_id=trainset.tokenizer.pad_token_id).to(device)
     optimizer = AdamW(model.parameters(), lr=hp.lr)
 
     scaler = torch.amp.GradScaler(
@@ -207,24 +196,54 @@ def train(trainset, validset, testset, run_tag, hp):
         enabled=hp.fp16
     )
     
-    num_steps = len(train_iter) * hp.n_epochs
+    # num_steps = len(train_iter) * hp.n_epochs
+    num_steps = math.ceil(len(trainset) / hp.batch_size) * hp.n_epochs
     scheduler = get_linear_schedule_with_warmup(optimizer,
                                                 num_warmup_steps=0,
                                                 num_training_steps=num_steps)
+    # TODO: have the scheduler account for the growing dataset size due to augments
 
     # logging with tensorboardX
     writer = SummaryWriter(log_dir=hp.logdir)
 
+    # intialize active learning augmentation driver if specified
+    active_driver = ActiveAugmentationDriver(hp) if hp.active_aug else None
+
     best_dev_f1 = best_test_f1 = 0.0
     for epoch in range(1, hp.n_epochs+1):
+        # Recreate train loader to include newly augmented examples
+        train_iter = data.DataLoader(
+            dataset=trainset,
+            batch_size=hp.batch_size,
+            shuffle=True,
+            num_workers=0,
+            collate_fn=padder
+        )
+
         # train
         model.train()
         train_step(train_iter, model, optimizer, scheduler, hp, scaler)
 
-        # eval
+        # evaluate current student on training data for augmentation feedback
+        train_eval_iter = data.DataLoader(
+            dataset=trainset,
+            batch_size=hp.batch_size * 16,
+            shuffle=False,
+            num_workers=0,
+            collate_fn=padder
+        )
+
         model.eval()
+
+        # standard validation/test evaluation
         dev_f1, th = evaluate(model, valid_iter)
         test_f1 = evaluate(model, test_iter, threshold=th)
+
+        # active augmentation using training-set feedback
+        if hp.active_aug:
+            _, _, eval_details = evaluate(model, train_eval_iter, return_details=True)
+            active_driver.run_round(trainset, trainset, eval_details)
+            # TODO: eventually decide whether to allow augmented samples to be re-used as feedback examples for the teacher model
 
         if dev_f1 > best_dev_f1:
             best_dev_f1 = dev_f1

@@ -3,8 +3,6 @@ import torch
 from torch.utils import data
 from transformers import AutoTokenizer
 
-from .augment import Augmenter
-
 # map lm name to huggingface's pre-trained model names
 lm_mp = {
     'roberta': 'roberta-base',
@@ -26,8 +24,7 @@ class DittoDataset(data.Dataset):
                  path,
                  max_len=256,
                  size=None,
-                 lm='roberta',
-                 da=None):
+                 lm='roberta'):
         self.tokenizer = get_tokenizer(lm)
         self.pairs = []
         self.labels = []
@@ -46,12 +43,6 @@ class DittoDataset(data.Dataset):
 
         self.pairs = self.pairs[:size]
         self.labels = self.labels[:size]
-        self.da = da
-        if da is not None:
-            self.augmenter = Augmenter()
-        else:
-            self.augmenter = None
-
 
     def __len__(self):
         """Return the size of the dataset."""
@@ -65,7 +56,6 @@ class DittoDataset(data.Dataset):
 
         Returns:
             List of int: token ID's of the two entities
-            List of int: token ID's of the two entities augmented (if da is set)
             int: the label of the pair (0: unmatch, 1: match)
         """
         left = self.pairs[idx][0]
@@ -77,17 +67,7 @@ class DittoDataset(data.Dataset):
                                   max_length=self.max_len,
                                   truncation=True)
 
-        # augment if da is set
-        if self.da is not None:
-            combined = self.augmenter.augment_sent(left + ' [SEP] ' + right, self.da)
-            left, right = combined.split(' [SEP] ')
-            x_aug = self.tokenizer.encode(text=left,
-                                      text_pair=right,
-                                      max_length=self.max_len,
-                                      truncation=True)
-            return x, x_aug, self.labels[idx]
-        else:
-            return x, self.labels[idx]
+        return x, self.labels[idx]
 
 
     def pad(self, batch):
@@ -96,26 +76,20 @@ class DittoDataset(data.Dataset):
             batch (list of tuple): a list of dataset items
 
         Returns:
-            LongTensor: x1 of shape (batch_size, seq_len)
-            LongTensor: x2 of shape (batch_size, seq_len).
-                        Elements of x1 and x2 are padded to the same length
+            LongTensor: x of shape (batch_size, seq_len)
             LongTensor: a batch of labels, (batch_size,)
         """
         pad_id = self.tokenizer.pad_token_id
+        x, y = zip(*batch)
+        maxlen = max(len(xi) for xi in x)
+        x = [xi + [pad_id] * (maxlen - len(xi)) for xi in x]
 
-        if len(batch[0]) == 3:
-            x1, x2, y = zip(*batch)
+        return torch.LongTensor(x), torch.LongTensor(y)
 
-            maxlen = max([len(x) for x in x1+x2])
-            x1 = [xi + [pad_id]*(maxlen - len(xi)) for xi in x1]
-            x2 = [xi + [pad_id]*(maxlen - len(xi)) for xi in x2]
-            return torch.LongTensor(x1), \
-                   torch.LongTensor(x2), \
-                   torch.LongTensor(y)
-        else:
-            x12, y = zip(*batch)
-            maxlen = max([len(x) for x in x12])
-            x12 = [xi + [pad_id]*(maxlen - len(xi)) for xi in x12]
-            return torch.LongTensor(x12), \
-                   torch.LongTensor(y)
-
+    def add_new_examples(self, examples):
+        # add new examples (e.g., from augmentation) to the dataset
+        for ex in examples:
+                s1, s2, label = ex.strip().split('\t')
+                self.pairs.append((s1, s2))
+                self.labels.append(int(label))
+        return len(self.pairs)
