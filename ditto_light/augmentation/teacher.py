@@ -7,28 +7,30 @@ class TeacherModel:
         # should probably research what would be a good open source LLM to use as teacher model
         self.model_name = model_name
         self.model = None 
-        # TODO
+        # TODO: load a good teacher model
 
 
     def generate_examples(self, selected_examples, num_examples):
         """
-        generate new labeled entity-matching examples targeted at weaknesses identified in the student model
+        prompt the teacher model to generate new labeled entity-matching examples 
+        
+        include selected_examples in the teacher prompt to inform its augmentation response
 
-        returns: model_output
+        returns: teacher_output (list of responses of size "num_examples")
         """
-        model_output = None
+        teacher_output = []
 
-        # TODO
+        # TODO: prompt teacher model "num_examples" times
 
-        return model_output
+        return teacher_output
 
     def build_augmented_examples(self, teacher_outputs):
         """
-        convert teacher output into DITTO-compatible examples
+        convert teacher outputs into DITTO-compatible examples
 
-        format: fuse two entities, e.g. entity = "[COL] attr1 [VAL] val1 · · · [COL] attr𝑝 [VAL] val𝑝"
-                one sample: left_entity \t right_entity \t label(0 or 1)
-                e.g. "COL title VAL "ASUS GeForce RTX 2060 SUPER TURBO EVO"@en	COL title VAL "Gigabyte Aorus GeForce RTX 2060 Super 8GB Graphics Card"@en 0"
+        DITTO-format: one entity looks like: "[COL] attr1 [VAL] val1 · · · [COL] attr𝑝 [VAL] val𝑝"
+                      one sample looks like: left_entity \t right_entity \t label(0 or 1)
+                      example: "COL title VAL "ASUS GeForce RTX 2060 SUPER TURBO EVO"@en	COL title VAL "Gigabyte Aorus GeForce RTX 2060 Super 8GB Graphics Card"@en 0"
 
         maybe remove duplicates, enforce postivie/negative balance, etc.
         
@@ -36,7 +38,7 @@ class TeacherModel:
         """
         new_augmented_examples = []
 
-        # TODO
+        # TODO: parse teacher outputs to extract new augmented examples
 
         return new_augmented_examples
         

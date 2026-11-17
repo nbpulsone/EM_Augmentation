@@ -104,6 +104,7 @@ def evaluate(model, iterator, threshold=None, return_details=False):
             # return details potentially relevant for augmentation
             details = {
                 "labels": all_y,
+                "preds": pred,
                 "probs": all_probs,
                 "threshold": best_th
             }

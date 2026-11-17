@@ -13,7 +13,7 @@ class ActiveAugmentationDriver:
         selected = select_examples(feedback_dataset, evaluation_details, self.hp)
 
         # teacher creates targeted examples
-        teacher_outputs = self.teacher.generate_examples(selected,self.hp.aug_examples)
+        teacher_outputs = self.teacher.generate_examples(selected, self.hp.num_aug_examples)
 
         # convert to valid EM training examples
         augmented_examples = self.teacher.build_augmented_examples(teacher_outputs)

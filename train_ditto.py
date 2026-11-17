@@ -29,7 +29,7 @@ if __name__=="__main__":
     parser.add_argument("--student_lm", type=str, default="distilbert")
     parser.add_argument("--teacher_lm", type=str, default=None)
     parser.add_argument("--active_aug", action="store_true")
-    parser.add_argument("--aug_examples", type=int, default=100)
+    parser.add_argument("--num_aug_examples", type=int, default=100)
 
     parser.add_argument("--fp16", dest="fp16", action="store_true")
     parser.add_argument("--bf16", action="store_true")
