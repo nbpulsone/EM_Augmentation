@@ -1,13 +1,55 @@
 # teacher.py
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 class TeacherModel:
 
-    def __init__(self, model_name):
+    DEFAULT_TEACHER = "Qwen/Qwen2.5-7B-Instruct"
+
+    def __init__(self, model_name=DEFAULT_TEACHER, load_in_4bit=True, device_map="auto"):
         # add support for loading whatever models we want to use
         # should probably research what would be a good open source LLM to use as teacher model
-        self.model_name = model_name
-        self.model = None 
+
         # TODO: load a good teacher model
+        self.model_name = model_name
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+        quant_config = None
+        if load_in_4bit and torch.cuda.is_available():
+            # cuts memory ~4x with small quality loss; needs `pip install bitsandbytes`
+            quant_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4",
+            )
+
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            quantization_config=quant_config,
+            torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+            device_map=device_map,
+        )
+        self.model.eval()
+
+    def _generate(self, prompt, system_prompt, max_new_tokens=512, temperature=0.8):
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+        inputs = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, return_tensors="pt", return_dict=True
+        ).to(self.model.device)
+
+        with torch.no_grad():
+            out = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                temperature=temperature,
+                top_p=0.95,
+            )
+        prompt_len = inputs["input_ids"].shape[1]
+        return self.tokenizer.decode(out[0][prompt_len:], skip_special_tokens=True)
 
 
     def generate_examples(self, selected_examples, num_examples):
