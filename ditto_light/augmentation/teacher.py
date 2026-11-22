@@ -62,7 +62,48 @@ class TeacherModel:
         """
         teacher_output = []
 
-        # TODO: prompt teacher model "num_examples" times
+        system_prompt = """
+        You are a teacher for an entity matching AI model.
+
+        Entity matching is the process of matching two entries in different databases that are functionally identical despite having different names or attributes, due to natural human error or differences in data storage.
+        A Large Language Model is tasked with finding these matches by performing entity matching; however, it will not perform perfectly.
+        In order to train this matching model, it must be provided with more examples in areas it has diffculty.
+
+        You will be provided with a selection of examples that a learner model failed to match correctly.
+        Generate a similar but not same labeled entity matching example based on the failed examples.
+
+        Use DITTO-format when producing your example.
+
+        DITTO-format: one entity looks like: "[COL] attr1 [VAL] val1 · · · [COL] attr𝑝 [VAL] val𝑝"
+                              one sample looks like: left_entity \t right_entity \t label(0 or 1)
+                              example: "COL title VAL "ASUS GeForce RTX 2060 SUPER TURBO EVO"@en	COL title VAL "Gigabyte Aorus GeForce RTX 2060 Super 8GB Graphics Card"@en 0"
+        """
+
+        formatted = []
+
+        # assumes a tuple format for selected_examples. ()
+        for i, example in enumerate(selected_examples, start=1):
+            left, right, label = example
+            formatted.append(
+                f"Example {i}:\n"
+                f"Left entity: {left}\n"
+                f"Right entity: {right}\n"
+                f"Label: {label} "
+                f"({'match' if label == 1 else 'no match'})"
+            )
+
+        formatted_examples = "\n\n".join(formatted)
+
+        # Not sure how we want to specify to generate positive or negative examples! Random?
+        user_prompt = f"""
+        Generate a new pair of entities that match, with the correct format, based on the following examples:
+
+        {formatted_examples}
+        """
+
+        for _ in range(num_examples):
+            # Left max_new_tokens and temperature at default
+            teacher_output.append(self._generate(user_prompt, system_prompt))
 
         return teacher_output
 
