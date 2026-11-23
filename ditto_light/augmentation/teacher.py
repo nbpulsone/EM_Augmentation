@@ -120,8 +120,30 @@ class TeacherModel:
         returns: new_augmented_examples
         """
         new_augmented_examples = []
+        seen = set()
 
-        # TODO: parse teacher outputs to extract new augmented examples
+        for output in teacher_outputs:
+            if not output:
+                continue
+
+            for line in output.splitlines():
+                line = line.strip()
+
+                if not line:
+                    continue
+
+                line.replace("\\t", "\t")
+                parts = [p.strip() for p in line.split("\t")]
+                left, right, label = parts
+                if label not in (0, 1):
+                    continue
+                if left == right:
+                    #Ignore duplicates
+                    continue
+                key = (left.lower(), right.lower())
+                if key in seen:
+                    continue
+                new_augmented_examples.append((left, right, label))
 
         return new_augmented_examples
         
