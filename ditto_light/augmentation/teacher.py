@@ -69,7 +69,7 @@ class TeacherModel:
         A Large Language Model is tasked with finding these matches by performing entity matching; however, it will not perform perfectly.
         In order to train this matching model, it must be provided with more examples in areas it has diffculty.
 
-        You will be provided with a selection of examples that a learner model failed to match correctly.
+        You will be provided with a selection of examples that a learner model struggled to respond to.
         Generate a similar but not same labeled entity matching example based on the failed examples.
 
         Use DITTO-format when producing your example.
@@ -94,9 +94,8 @@ class TeacherModel:
 
         formatted_examples = "\n\n".join(formatted)
 
-        # Not sure how we want to specify to generate positive or negative examples! Random?
         user_prompt = f"""
-        Generate a new pair of entities that match, with the correct format, based on the following examples:
+        Modify one of the following positive examples to create a negative example, in the correct format:
 
         {formatted_examples}
         """
