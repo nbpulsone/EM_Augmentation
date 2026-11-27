@@ -29,7 +29,7 @@ class ActiveAugmentationDriver:
 
     def __init__(self, hp: Any) -> None:
         self.hp = hp
-        self.teacher = TeacherModel(hp.teacher_lm)
+        self.teacher = TeacherModel(hp.teacher_lm or TeacherModel.DEFAULT_TEACHER)
 
         # Optional ADA hyperparameters (safe defaults if not yet defined on `hp`)
         self.default_num_aug: int = int(getattr(hp, "num_aug_examples", 0))
@@ -143,9 +143,36 @@ class ActiveAugmentationDriver:
             self._record_round(epoch, len(selected), len(candidates), num_to_request, 0)
             return []
 
+        # TEMP debug: see teacher output
+        for output in teacher_outputs[:3]:
+            print("Raw teacher output:", repr(output))
+
         # 4. Convert teacher outputs to valid EM training examples
         augmented_examples = self.teacher.build_augmented_examples(teacher_outputs)
         augmented_examples = [ex for ex in (augmented_examples or []) if ex is not None]
+        print(
+            f"Teacher generation: "
+            f"requested={num_to_request}, "
+            f"returned={len(teacher_outputs)}, "
+            f"parsed={len(augmented_examples)}"
+        )
+
+        # require distinct pairs across rounds/original training set examples
+        existing_pairs = {(left.lower(), right.lower()) for left, right in train_dataset.pairs}
+        unique_examples = []
+
+        for left, right, label in augmented_examples:
+            key = (left.lower(), right.lower())
+            if key in existing_pairs:
+                continue
+            existing_pairs.add(key)
+            unique_examples.append((left, right, label))
+
+        augmented_examples = unique_examples[:num_to_request]
+        print(
+            f"Teacher generation after deduplication: "
+            f"accepted={len(augmented_examples)}"
+        )
 
         # Enforce hard total budget cap even if teacher over-generated
         if remaining_budget is not None and len(augmented_examples) > remaining_budget:
@@ -219,7 +246,7 @@ class ActiveAugmentationDriver:
             return 0, 0
 
         if self.target_c_eff is not None and max_total is not None and self.max_rounds:
-            per_round = max(1, math.floor(max_total / self.max_rounds))
+            per_round = math.ceil(remaining / (self.max_rounds - self.round_idx))
         else:
             per_round = self.default_num_aug if self.default_num_aug > 0 else (remaining or 0)
 

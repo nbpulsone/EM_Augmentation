@@ -1,6 +1,7 @@
 # teacher.py
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+import random
 
 class TeacherModel:
 
@@ -61,49 +62,49 @@ class TeacherModel:
         returns: teacher_output (list of responses of size "num_examples")
         """
         teacher_output = []
+        selected_examples = [ex for ex in selected_examples if ex[2] == 1]
+
+        if not selected_examples:
+            return teacher_output
 
         system_prompt = """
-        You are a teacher for an entity matching AI model.
+        You generate hard negative examples for entity matching.
 
-        Entity matching is the process of matching two entries in different databases that are functionally identical despite having different names or attributes, due to natural human error or differences in data storage.
-        A Large Language Model is tasked with finding these matches by performing entity matching; however, it will not perform perfectly.
-        In order to train this matching model, it must be provided with more examples in areas it has diffculty.
+        You will receive two records referring to the same real-world entity.
 
-        You will be provided with a selection of examples that a learner model struggled to respond to.
-        Generate a similar but not same labeled entity matching example based on the failed examples.
+        Create a modified version of the RIGHT record that refers to a different but similar real-world entity.
 
-        Use DITTO-format when producing your example.
+        Requirements:
+        - Ensure that at least one identity-defining attribute changes substantially, not just its spelling or formatting.
+        - For restaurants, changing only cuisine is insufficient.
+        - For products, changing only descriptive text is insufficient.
+        - For publications, changing only title formatting is insufficient.
+        - Ensure the modified attributes are internally consistent.
 
-        DITTO-format: one entity looks like: "[COL] attr1 [VAL] val1 · · · [COL] attr𝑝 [VAL] val𝑝"
-                              one sample looks like: left_entity \t right_entity \t label(0 or 1)
-                              example: "COL title VAL "ASUS GeForce RTX 2060 SUPER TURBO EVO"@en	COL title VAL "Gigabyte Aorus GeForce RTX 2060 Super 8GB Graphics Card"@en 0"
+        For example, changing a restaurant's cuisine alone does not establish a different restaurant. Changing a product's description alone does not establish a different product.
+
+        Return ONLY the modified right record on a single line. Do not return the left record, a label, or an explanation.
         """
 
-        formatted = []
+        for i in range(num_examples):
+            left, right, label = selected_examples[
+                i % len(selected_examples)
+            ]
 
-        # assumes a tuple format for selected_examples. ()
-        for i, example in enumerate(selected_examples, start=1):
-            left, right, label = example
-            formatted.append(
-                f"Example {i}:\n"
-                f"Left entity: {left}\n"
-                f"Right entity: {right}\n"
-                f"Label: {label} "
-                f"({'match' if label == 1 else 'no match'})"
+            user_prompt = (
+                f"Original left record:\n{left}\n\n"
+                f"Original right record:\n{right}\n\n"
+                "Generate a modified right record representing "
+                "a different but similar entity."
             )
 
-        formatted_examples = "\n\n".join(formatted)
+            modified_right = self._generate(
+                user_prompt, system_prompt
+            ).strip()
 
-        user_prompt = f"""
-        Modify one of the following positive examples to create a negative example, in the correct format:
-
-        {formatted_examples}
-        """
-
-        for _ in range(num_examples):
-            # Left max_new_tokens and temperature at default
-            teacher_output.append(self._generate(user_prompt, system_prompt))
-
+            teacher_output.append(
+                (left, right, modified_right)
+            )
         return teacher_output
 
     def build_augmented_examples(self, teacher_outputs):
@@ -121,28 +122,39 @@ class TeacherModel:
         new_augmented_examples = []
         seen = set()
 
-        for output in teacher_outputs:
-            if not output:
+        for left, original_right, modified_right in teacher_outputs:
+            if not modified_right:
                 continue
 
-            for line in output.splitlines():
-                line = line.strip()
+            # Require a single DITTO-formatted entity
+            if "\n" in modified_right or "\t" in modified_right:
+                continue
 
-                if not line:
-                    continue
+            if not modified_right.startswith("COL "):
+                continue
 
-                line.replace("\\t", "\t")
-                parts = [p.strip() for p in line.split("\t")]
-                left, right, label = parts
-                if label not in (0, 1):
-                    continue
-                if left == right:
-                    #Ignore duplicates
-                    continue
-                key = (left.lower(), right.lower())
-                if key in seen:
-                    continue
-                new_augmented_examples.append((left, right, label))
+            if " VAL " not in modified_right:
+                continue
+
+            # Reject unchanged entities
+            if modified_right.lower() == original_right.lower():
+                continue
+
+            if modified_right.lower() == left.lower():
+                continue
+
+            # Remove duplicates
+            key = (left.lower(), modified_right.lower())
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+
+            # Assign negative label deterministically
+            new_augmented_examples.append(
+                (left, modified_right, 0)
+            )
 
         return new_augmented_examples
         

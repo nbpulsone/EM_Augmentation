@@ -87,9 +87,12 @@ class DittoDataset(data.Dataset):
         return torch.LongTensor(x), torch.LongTensor(y)
 
     def add_new_examples(self, examples):
-        # add new examples (e.g., from augmentation) to the dataset
-        for ex in examples:
-                s1, s2, label = ex.strip().split('\t')
-                self.pairs.append((s1, s2))
-                self.labels.append(int(label))
+        for left, right, label in examples:
+            self.pairs.append((left, right))
+            self.labels.append(int(label))
+
         return len(self.pairs)
+
+    def get_raw_example(self, idx):
+        left, right = self.pairs[idx]
+        return left, right, self.labels[idx]
